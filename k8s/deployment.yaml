@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boardgame-deployment
+  namespace: webapps
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: boardgame
+
+  template:
+    metadata:
+      labels:
+        app: boardgame
+
+    spec:
+      containers:
+        - name: boardgame
+          image: palakk1234/boardshack:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080

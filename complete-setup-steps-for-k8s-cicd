@@ -1,0 +1,1799 @@
+# 1. Project Objectives
+
+The main objectives of this project are:
+
+* Automate the software delivery lifecycle.
+* Implement CI/CD using Jenkins.
+* Build a Java application using Maven.
+* Perform automated unit testing.
+* Perform source/filesystem security scanning.
+* Perform static code analysis using SonarQube.
+* Enforce a SonarQube quality gate.
+* Store Maven build artifacts in Nexus.
+* Containerize the application using Docker.
+* Scan Docker images using Trivy.
+* Push Docker images to Docker Hub.
+* Deploy the application automatically to Kubernetes.
+* Use a multi-node Kubernetes cluster.
+* Implement Kubernetes RBAC.
+* Deploy an NGINX Ingress Controller.
+* Verify application deployment automatically.
+* Send pipeline completion notifications through email.
+
+---
+
+# 2. Technologies Used
+
+| Technology       | Purpose                          |
+| ---------------- | -------------------------------- |
+| AWS EC2          | Infrastructure                   |
+| Ubuntu           | Operating System                 |
+| Kubernetes       | Container orchestration          |
+| kubeadm          | Kubernetes cluster bootstrapping |
+| containerd       | Container runtime                |
+| Calico           | Kubernetes CNI/networking        |
+| NGINX Ingress    | HTTP/HTTPS ingress               |
+| Jenkins          | CI/CD automation                 |
+| GitHub           | Source code management           |
+| Maven            | Build and dependency management  |
+| Java 17          | Application runtime/build        |
+| SonarQube        | Static code quality analysis     |
+| Trivy            | Security/vulnerability scanning  |
+| Nexus Repository | Maven artifact repository        |
+| Docker           | Containerization                 |
+| Docker Hub       | Container image registry         |
+| Kubernetes RBAC  | Access control                   |
+| Email Extension  | Jenkins notifications            |
+
+---
+
+# 3. AWS Infrastructure
+
+The project was deployed using multiple AWS EC2 instances.
+
+## EC2 Architecture
+
+```text
+                         AWS
+                          |
+                 -----------------
+                 |               |
+             Jenkins         Supporting
+             Server          Services
+                 |
+                 |
+          Kubernetes Cluster
+                 |
+        ---------------------
+        |         |         |
+     Master     Worker 1  Worker 2
+```
+
+### Kubernetes Nodes
+
+```text
+Master / Control Plane
+        |
+        +---- Worker Node 1
+        |
+        +---- Worker Node 2
+```
+
+The Kubernetes cluster was created using:
+
+```text
+1 Control Plane
+2 Worker Nodes
+```
+
+---
+
+# 4. AWS EC2 Prerequisites
+
+Create the required EC2 instances.
+
+For this project:
+
+```text
+Master Node
+Worker Node 1
+Worker Node 2
+```
+
+The nodes should be placed in the same VPC/network so that they can communicate with each other.
+
+A Jenkins EC2 instance and supporting service instances such as Nexus and SonarQube can be created separately.
+
+---
+
+# 5. EC2 Security Group Requirements
+
+The Kubernetes nodes require communication between the nodes.
+
+Important ports used in this project include:
+
+```text
+22       SSH
+80       HTTP
+443      HTTPS
+6443     Kubernetes API Server
+30000-32767 Kubernetes NodePort range
+```
+
+For a lab environment, these ports may be opened according to the required access pattern.
+
+### Important
+
+For production environments, avoid opening sensitive Kubernetes ports such as `6443` to `0.0.0.0/0`.
+
+Prefer:
+
+```text
+Jenkins Security Group
+        |
+        v
+Kubernetes Master Security Group
+```
+
+or private VPC communication.
+
+---
+
+# 6. Kubernetes Cluster Setup
+
+The Kubernetes cluster was created using `kubeadm`.
+
+Target Kubernetes version:
+
+```text
+v1.28.1
+```
+
+Container runtime:
+
+```text
+containerd
+```
+
+CNI:
+
+```text
+Calico
+```
+
+---
+
+# 7. Kubernetes Node Preparation
+
+Run the following basic preparation on:
+
+```text
+Master Node
+Worker Node 1
+Worker Node 2
+```
+
+## Update packages
+
+```bash
+sudo apt-get update
+sudo apt-get upgrade -y
+```
+
+---
+
+# 8. Disable Swap
+
+Kubernetes requires swap to be disabled for this setup.
+
+```bash
+sudo swapoff -a
+```
+
+To disable it permanently:
+
+```bash
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
+```
+
+Verify:
+
+```bash
+free -h
+```
+
+Swap should show:
+
+```text
+0
+```
+
+---
+
+# 9. Install Required Dependencies
+
+```bash
+sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+```
+
+Create the keyring directory:
+
+```bash
+sudo mkdir -p -m 755 /etc/apt/keyrings
+```
+
+---
+
+# 10. Install Container Runtime
+
+This project uses containerd.
+
+Install:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y containerd
+```
+
+Create the configuration directory:
+
+```bash
+sudo mkdir -p /etc/containerd
+```
+
+Generate the default configuration:
+
+```bash
+containerd config default | sudo tee /etc/containerd/config.toml
+```
+
+Restart containerd:
+
+```bash
+sudo systemctl restart containerd
+```
+
+Enable it during boot:
+
+```bash
+sudo systemctl enable containerd
+```
+
+Verify:
+
+```bash
+sudo systemctl status containerd
+```
+
+---
+
+# 11. Configure containerd for Kubernetes
+
+Edit:
+
+```bash
+sudo nano /etc/containerd/config.toml
+```
+
+Find:
+
+```text
+SystemdCgroup = false
+```
+
+Change it to:
+
+```text
+SystemdCgroup = true
+```
+
+Restart:
+
+```bash
+sudo systemctl restart containerd
+```
+
+Verify:
+
+```bash
+sudo systemctl status containerd
+```
+
+---
+
+# 12. Install Kubernetes Components
+
+Install:
+
+```text
+kubeadm
+kubelet
+kubectl
+```
+
+The same Kubernetes version should be installed on all three nodes.
+
+Verify:
+
+```bash
+kubeadm version
+kubelet --version
+kubectl version --client
+containerd --version
+```
+
+Expected Kubernetes version:
+
+```text
+v1.28.1
+```
+
+---
+
+# 13. Initialize the Master Node
+
+Run this command only on the Master / Control Plane:
+
+```bash
+sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+```
+
+The command initializes:
+
+```text
+Kubernetes API Server
+Controller Manager
+Scheduler
+etcd
+Control Plane
+```
+
+At the end, kubeadm provides a worker-node join command similar to:
+
+```bash
+sudo kubeadm join <MASTER-IP>:6443 \
+--token <TOKEN> \
+--discovery-token-ca-cert-hash sha256:<HASH>
+```
+
+Save this command.
+
+It will be required on both worker nodes.
+
+---
+
+# 14. Configure kubectl on Master
+
+After `kubeadm init`, configure kubectl:
+
+```bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+Test:
+
+```bash
+kubectl get nodes
+```
+
+Initially the worker nodes will not appear because they have not joined yet.
+
+---
+
+# 15. Install Calico CNI
+
+Kubernetes requires a pod network.
+
+Install Calico:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.4/manifests/calico.yaml
+```
+
+Check:
+
+```bash
+kubectl get pods -n kube-system
+```
+
+Wait until the Calico components become healthy.
+
+---
+
+# 16. Join Worker Nodes
+
+Run the `kubeadm join` command generated during `kubeadm init`.
+
+Run it on:
+
+```text
+Worker Node 1
+Worker Node 2
+```
+
+Example:
+
+```bash
+sudo kubeadm join <MASTER-IP>:6443 \
+--token <TOKEN> \
+--discovery-token-ca-cert-hash sha256:<HASH>
+```
+
+Do NOT run `kubeadm join` on the master.
+
+---
+
+# 17. Verify Multi-Node Cluster
+
+Run on Master:
+
+```bash
+kubectl get nodes
+```
+
+Expected result:
+
+```text
+NAME              STATUS   ROLES
+master-node       Ready    control-plane
+worker-node-1     Ready    <none>
+worker-node-2     Ready    <none>
+```
+
+Check detailed information:
+
+```bash
+kubectl get nodes -o wide
+```
+
+---
+
+# 18. Verify Kubernetes System Pods
+
+```bash
+kubectl get pods -n kube-system -o wide
+```
+
+Important components include:
+
+```text
+etcd
+kube-apiserver
+kube-controller-manager
+kube-scheduler
+kube-proxy
+coredns
+calico-node
+calico-kube-controllers
+```
+
+All required pods should eventually reach:
+
+```text
+Running
+```
+
+---
+
+# 19. Kubernetes Troubleshooting
+
+If a node is not Ready:
+
+```bash
+kubectl get nodes
+```
+
+Check system pods:
+
+```bash
+kubectl get pods -n kube-system -o wide
+```
+
+Check node details:
+
+```bash
+kubectl describe node <NODE_NAME>
+```
+
+Check kubelet:
+
+```bash
+sudo systemctl status kubelet
+```
+
+Check kubelet logs:
+
+```bash
+sudo journalctl -u kubelet -xe
+```
+
+Check containerd:
+
+```bash
+sudo systemctl status containerd
+```
+
+Check container runtime:
+
+```bash
+sudo crictl ps
+```
+
+Check specific container logs:
+
+```bash
+sudo crictl logs <CONTAINER_ID>
+```
+
+---
+
+# 20. Clean Kubernetes Cluster Reset
+
+If the cluster becomes corrupted and needs to be recreated:
+
+Run on worker nodes:
+
+```bash
+sudo kubeadm reset -f
+```
+
+Run on master:
+
+```bash
+sudo kubeadm reset -f
+```
+
+Clean CNI configuration:
+
+```bash
+sudo rm -rf /etc/cni/net.d
+```
+
+Clean Kubernetes configuration:
+
+```bash
+rm -rf $HOME/.kube
+```
+
+Restart containerd:
+
+```bash
+sudo systemctl restart containerd
+```
+
+If IPVS was used:
+
+```bash
+sudo ipvsadm --clear
+```
+
+Then recreate the cluster from the initialization stage.
+
+> Important: `kubeadm reset` does not remove `$HOME/.kube/config`, so that file may need to be removed manually when rebuilding the cluster.
+
+---
+
+# 21. Deploy NGINX Ingress Controller
+
+Install NGINX Ingress Controller:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.49.0/deploy/static/provider/baremetal/deploy.yaml
+```
+
+Verify:
+
+```bash
+kubectl get pods -n ingress-nginx
+```
+
+Verify services:
+
+```bash
+kubectl get svc -n ingress-nginx
+```
+
+The controller used in this project exposes HTTP/HTTPS through NodePorts.
+
+Example:
+
+```text
+80  -> NodePort
+443 -> NodePort
+```
+
+---
+
+# 22. Kubernetes RBAC
+
+RBAC was implemented to control access to Kubernetes resources.
+
+A dedicated ServiceAccount was created:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: webapps
+```
+
+---
+
+# 23. Create Application Namespace
+
+```bash
+kubectl create namespace webapps
+```
+
+Verify:
+
+```bash
+kubectl get namespaces
+```
+
+---
+
+# 24. Kubernetes Role
+
+A Role was created for the application namespace.
+
+Example:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-role
+  namespace: webapps
+
+rules:
+- apiGroups:
+  - ""
+  - apps
+  - autoscaling
+  - batch
+  - extensions
+  - policy
+  - rbac.authorization.k8s.io
+
+  resources:
+  - pods
+  - secrets
+  - configmaps
+  - daemonsets
+  - deployments
+  - events
+  - endpoints
+  - horizontalpodautoscalers
+  - ingress
+  - jobs
+  - limitranges
+  - namespaces
+  - nodes
+  - persistentvolumes
+  - persistentvolumeclaims
+  - resourcequotas
+  - replicasets
+  - replicationcontrollers
+  - serviceaccounts
+  - services
+
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+```
+
+---
+
+# 25. RoleBinding
+
+The Role was assigned to the Jenkins ServiceAccount:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-rolebinding
+  namespace: webapps
+
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-role
+
+subjects:
+- namespace: webapps
+  kind: ServiceAccount
+  name: jenkins
+```
+
+Apply:
+
+```bash
+kubectl apply -f rbac.yaml
+```
+
+Verify:
+
+```bash
+kubectl get serviceaccount -n webapps
+kubectl get role -n webapps
+kubectl get rolebinding -n webapps
+```
+
+---
+
+# 26. Jenkins Server
+
+Jenkins was deployed on a separate AWS EC2 instance.
+
+Jenkins was configured with the following tools:
+
+```text
+JDK 17
+Maven
+Docker
+SonarQube Scanner
+kubectl
+Trivy
+```
+
+Jenkins was also given access to the Docker daemon.
+
+Verify Docker access from the Jenkins user:
+
+```bash
+sudo -u jenkins docker --version
+```
+
+Verify:
+
+```bash
+sudo -u jenkins docker info
+```
+
+Expected:
+
+```text
+JENKINS CAN ACCESS DOCKER
+```
+
+---
+
+# 27. Jenkins Credentials
+
+The following credentials were configured in Jenkins:
+
+```text
+git-cred
+docker-cred
+sonar-token
+k8-cred
+mail-cred
+```
+
+### GitHub
+
+Used for source-code checkout.
+
+### Docker Hub
+
+Used for:
+
+```text
+docker login
+docker push
+```
+
+A Docker Hub Personal Access Token can be stored as the password for the Jenkins Docker credential.
+
+### SonarQube
+
+Used for authentication with SonarQube.
+
+### Kubernetes
+
+Used by Jenkins to communicate with the Kubernetes API server.
+
+---
+
+# 28. Nexus Repository
+
+Nexus Repository was used as the Maven artifact repository.
+
+The Maven build publishes the generated artifacts using:
+
+```bash
+mvn deploy
+```
+
+This allows the build artifact to be stored independently from the Docker image.
+
+---
+
+# 29. SonarQube
+
+SonarQube was integrated into Jenkins for static code analysis.
+
+The pipeline executes:
+
+```bash
+sonar-scanner
+```
+
+The pipeline then waits for the SonarQube quality gate:
+
+```groovy
+waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+```
+
+This provides automated code-quality feedback during the CI/CD process.
+
+---
+
+# 30. Trivy Security Scanning
+
+Trivy was integrated at two stages.
+
+## Filesystem Scan
+
+```bash
+trivy fs --format table -o trivy-fs-report.html .
+```
+
+This scans the project filesystem for vulnerabilities and security issues.
+
+## Docker Image Scan
+
+```bash
+trivy image \
+--format table \
+-o trivy-image-report.html \
+palakk1234/boardshack:latest
+```
+
+This scans the built container image.
+
+---
+
+# 31. Docker Image
+
+The application is containerized using the Dockerfile in the repository.
+
+Image:
+
+```text
+palakk1234/boardshack:latest
+```
+
+Build:
+
+```bash
+docker build -t palakk1234/boardshack:latest .
+```
+
+Login:
+
+```bash
+docker login
+```
+
+Push:
+
+```bash
+docker push palakk1234/boardshack:latest
+```
+
+---
+
+# 32. Kubernetes Application Deployment
+
+The Kubernetes deployment is defined in:
+
+```text
+deployment-service.yaml
+```
+
+The Deployment creates:
+
+```text
+2 application replicas
+```
+
+The application container runs on:
+
+```text
+8080
+```
+
+The Kubernetes Service exposes:
+
+```text
+80 -> 8080
+```
+
+The current manifest defines a LoadBalancer service:
+
+```yaml
+kind: Service
+type: LoadBalancer
+```
+
+The deployment uses:
+
+```text
+palakk1234/boardshack:latest
+```
+
+and:
+
+```text
+imagePullPolicy: Always
+```
+
+---
+
+# 33. Deploy Application Manually
+
+Create the namespace:
+
+```bash
+kubectl create namespace webapps
+```
+
+Deploy:
+
+```bash
+kubectl apply -f deployment-service.yaml
+```
+
+Check deployment:
+
+```bash
+kubectl get deployments -n webapps
+```
+
+Check pods:
+
+```bash
+kubectl get pods -n webapps -o wide
+```
+
+Check service:
+
+```bash
+kubectl get svc -n webapps
+```
+
+---
+
+# 34. Jenkins CI/CD Pipeline
+
+The Jenkinsfile automates the following stages:
+
+```text
+1. Git Checkout
+2. Compile
+3. Test
+4. File System Scan
+5. SonarQube Analysis
+6. Quality Gate
+7. Build
+8. Publish to Nexus
+9. Build & Tag Docker Image
+10. Docker Image Scan
+11. Push Docker Image
+12. Deploy to Kubernetes
+13. Verify Deployment
+14. Email Notification
+```
+
+The Jenkins pipeline is defined in:
+
+```text
+Jenkinsfile
+```
+
+---
+
+# 35. Pipeline Stage Details
+
+## Stage 1 - Git Checkout
+
+Jenkins checks out the application source code from GitHub.
+
+```bash
+git checkout main
+```
+
+---
+
+## Stage 2 - Compile
+
+```bash
+mvn compile
+```
+
+This verifies that the source code can be compiled successfully.
+
+---
+
+## Stage 3 - Test
+
+```bash
+mvn test
+```
+
+JUnit tests are executed.
+
+---
+
+## Stage 4 - Filesystem Security Scan
+
+```bash
+trivy fs .
+```
+
+The project filesystem is scanned for vulnerabilities.
+
+---
+
+## Stage 5 - SonarQube Analysis
+
+SonarQube performs static code analysis.
+
+It checks aspects such as:
+
+```text
+Code quality
+Bugs
+Vulnerabilities
+Code smells
+Maintainability
+```
+
+---
+
+## Stage 6 - Quality Gate
+
+Jenkins waits for the SonarQube quality gate result.
+
+---
+
+## Stage 7 - Maven Build
+
+```bash
+mvn package
+```
+
+The application JAR is generated.
+
+---
+
+## Stage 8 - Nexus Publishing
+
+```bash
+mvn deploy
+```
+
+The Maven artifact is uploaded to Nexus Repository.
+
+---
+
+## Stage 9 - Docker Build
+
+```bash
+docker build -t palakk1234/boardshack:latest .
+```
+
+The application is packaged into a container image.
+
+---
+
+## Stage 10 - Docker Image Scan
+
+Trivy scans the Docker image for vulnerabilities.
+
+---
+
+## Stage 11 - Docker Hub Push
+
+```bash
+docker push palakk1234/boardshack:latest
+```
+
+The image is published to Docker Hub.
+
+---
+
+## Stage 12 - Kubernetes Deployment
+
+Jenkins connects to the Kubernetes API server and executes:
+
+```bash
+kubectl apply -f deployment-service.yaml
+```
+
+---
+
+## Stage 13 - Deployment Verification
+
+Jenkins verifies:
+
+```bash
+kubectl get pods -n webapps
+kubectl get svc -n webapps
+```
+
+---
+
+## Stage 14 - Email Notification
+
+Jenkins sends an email notification containing:
+
+```text
+Job name
+Build number
+Pipeline status
+Build URL
+Docker scan report
+```
+
+---
+
+# 36. Kubernetes Deployment Flow
+
+```text
+Jenkins
+   |
+   | kubectl apply
+   v
+Kubernetes API Server
+   |
+   v
+Deployment
+   |
+   +----------------+
+   |                |
+   v                v
+Pod 1             Pod 2
+   |                |
+   +-------+--------+
+           |
+           v
+       Kubernetes
+         Service
+           |
+           v
+    NGINX / External
+        Access
+```
+
+---
+
+# 37. Application Verification
+
+Check:
+
+```bash
+kubectl get pods -n webapps
+```
+
+Expected:
+
+```text
+boardgame-deployment-xxxxx   Running
+boardgame-deployment-yyyyy   Running
+```
+
+Check:
+
+```bash
+kubectl get svc -n webapps
+```
+
+Check application logs:
+
+```bash
+kubectl logs -n webapps <POD_NAME>
+```
+
+Check deployment:
+
+```bash
+kubectl describe deployment boardgame-deployment -n webapps
+```
+
+---
+
+# 38. Troubleshooting Encountered During Implementation
+
+During implementation, several infrastructure and CI/CD issues were encountered and resolved.
+
+## 38.1 Kubernetes API Server / etcd Connection Error
+
+Symptom:
+
+```text
+dial tcp 127.0.0.1:2379:
+connect: connection refused
+```
+
+Cause:
+
+The Kubernetes API server could not communicate with the local etcd instance.
+
+Resolution:
+
+The cluster was reset and rebuilt cleanly using:
+
+```bash
+kubeadm reset -f
+```
+
+The Kubernetes configuration and CNI configuration were cleaned and the control plane was initialized again.
+
+---
+
+## 38.2 Kubernetes Nodes Not Ready
+
+Symptoms included:
+
+```text
+NotReady
+```
+
+and:
+
+```text
+node.kubernetes.io/not-ready
+```
+
+Resolution:
+
+Checked:
+
+```bash
+kubectl get nodes
+kubectl get pods -n kube-system
+sudo systemctl status kubelet
+sudo systemctl status containerd
+```
+
+The cluster networking and node configuration were corrected.
+
+---
+
+## 38.3 kube-proxy / CNI Problems
+
+System pods were inspected using:
+
+```bash
+kubectl get pods -n kube-system -o wide
+```
+
+and:
+
+```bash
+sudo crictl logs <CONTAINER_ID>
+```
+
+The cluster was eventually rebuilt cleanly with:
+
+```text
+containerd
+Calico
+kubeadm
+```
+
+---
+
+# 39. Jenkins Docker Permission Error
+
+Initially Jenkins produced:
+
+```text
+permission denied while trying to connect to the Docker daemon socket
+```
+
+Cause:
+
+The Jenkins user did not have permission to access:
+
+```text
+/var/run/docker.sock
+```
+
+Resolution:
+
+The Jenkins user was given access to Docker and verified using:
+
+```bash
+sudo -u jenkins docker info
+```
+
+Successful result:
+
+```text
+JENKINS CAN ACCESS DOCKER
+```
+
+---
+
+# 40. Docker Client Version Error
+
+Another error occurred:
+
+```text
+client version 1.29 is too old.
+Minimum supported API version is 1.40
+```
+
+Cause:
+
+Jenkins was using an older Docker CLI configured through the Jenkins Docker Tool installation instead of the system Docker CLI.
+
+Resolution:
+
+The Jenkins Docker configuration was corrected so Jenkins used the current Docker installation.
+
+Verification:
+
+```bash
+docker --version
+sudo -u jenkins docker --version
+sudo -u jenkins which docker
+```
+
+Expected:
+
+```text
+/usr/bin/docker
+```
+
+---
+
+# 41. Docker Hub Authentication
+
+Docker Hub authentication initially failed.
+
+The Jenkins credential was corrected to use:
+
+```text
+Docker Hub username
++
+Docker Hub Personal Access Token
+```
+
+instead of relying on the Docker Hub account password.
+
+The pipeline was then able to successfully push the image.
+
+---
+
+# 42. Jenkins to Kubernetes Connection Timeout
+
+The deployment stage initially failed with:
+
+```text
+failed to download openapi
+
+dial tcp <MASTER-IP>:6443:
+i/o timeout
+```
+
+Cause:
+
+Jenkins could not reach the Kubernetes API server on:
+
+```text
+6443
+```
+
+The issue was related to network/security-group connectivity between the Jenkins EC2 instance and Kubernetes control-plane EC2 instance.
+
+Resolution:
+
+Verified:
+
+```text
+Kubernetes API server
+Security Group
+Port 6443
+Private IP connectivity
+Jenkins host connectivity
+```
+
+After correcting connectivity, Jenkins successfully executed:
+
+```bash
+kubectl apply -f deployment-service.yaml
+```
+
+---
+
+# 43. Important Lesson From Troubleshooting
+
+For a Jenkins → Kubernetes deployment, there are three separate things that must work:
+
+```text
+1. Jenkins credentials
+        |
+        v
+2. Jenkins network connectivity
+        |
+        v
+3. Kubernetes RBAC permissions
+```
+
+Having correct Kubernetes credentials alone is not enough.
+
+Jenkins must also be able to reach:
+
+```text
+MASTER_PRIVATE_IP:6443
+```
+
+---
+
+# 44. Security Considerations
+
+The project uses several security practices:
+
+### Source Code
+
+GitHub repository is used for source control.
+
+### Secrets
+
+Credentials are stored in Jenkins Credentials rather than directly inside the Jenkinsfile.
+
+### Docker Authentication
+
+Docker Hub Personal Access Token is used instead of storing the Docker Hub account password.
+
+### Container Security
+
+Trivy scans the filesystem and Docker image.
+
+### Code Quality
+
+SonarQube performs static analysis.
+
+### Kubernetes Access
+
+RBAC is used to restrict Jenkins access to Kubernetes resources.
+
+---
+
+# 45. Repository Structure
+
+```text
+CI-CD-Pipeline-Deployment/
+│
+├── .mvn/
+│   └── wrapper/
+│
+├── src/
+│   ├── main/
+│   └── test/
+│
+├── Dockerfile
+│
+├── Jenkinsfile
+│
+├── deployment-service.yaml
+│
+├── pom.xml
+│
+├── sonar-project.properties
+│
+├── mvnw
+├── mvnw.cmd
+│
+└── README.md
+```
+
+Recommended future infrastructure documentation:
+
+```text
+docs/
+│
+├── kubernetes-setup.md
+├── jenkins-setup.md
+├── rbac.yaml
+├── troubleshooting.md
+└── architecture.md
+```
+
+---
+
+# 46. Recommended Infrastructure Documentation
+
+The Kubernetes setup used during this project can be documented separately.
+
+Example:
+
+```text
+scripts/
+├── docker.sh
+├── kubernetes.sh
+└── setup-k8s-nodes.sh
+
+k8s/
+├── rbac.yaml
+├── deployment-service.yaml
+└── ingress.yaml
+```
+
+This makes the repository easier for another DevOps engineer to reproduce.
+
+---
+
+# 47. End-to-End Deployment
+
+The complete deployment process is:
+
+```text
+1. Create AWS EC2 infrastructure
+        |
+        v
+2. Configure Master + 2 Worker Nodes
+        |
+        v
+3. Install containerd
+        |
+        v
+4. Install kubeadm/kubelet/kubectl
+        |
+        v
+5. Initialize Kubernetes Master
+        |
+        v
+6. Install Calico
+        |
+        v
+7. Join Worker Node 1
+        |
+        v
+8. Join Worker Node 2
+        |
+        v
+9. Verify 3-node cluster
+        |
+        v
+10. Install NGINX Ingress
+        |
+        v
+11. Configure Kubernetes RBAC
+        |
+        v
+12. Configure Jenkins
+        |
+        v
+13. Configure GitHub credentials
+        |
+        v
+14. Configure SonarQube
+        |
+        v
+15. Configure Nexus
+        |
+        v
+16. Configure Docker
+        |
+        v
+17. Configure Kubernetes credentials
+        |
+        v
+18. Run Jenkins pipeline
+        |
+        v
+19. Maven Build + Test
+        |
+        v
+20. Security Scan
+        |
+        v
+21. SonarQube Quality Gate
+        |
+        v
+22. Publish artifact to Nexus
+        |
+        v
+23. Build Docker image
+        |
+        v
+24. Scan Docker image
+        |
+        v
+25. Push image to Docker Hub
+        |
+        v
+26. Deploy to Kubernetes
+        |
+        v
+27. Verify pods and services
+        |
+        v
+28. Access application
+```
+
+---
+
+# 48. What This Project Demonstrates
+
+This project demonstrates practical experience with:
+
+* AWS EC2 infrastructure
+* Linux administration
+* Kubernetes cluster setup
+* Multi-node Kubernetes architecture
+* kubeadm
+* containerd
+* Calico networking
+* Kubernetes Deployments
+* Kubernetes Services
+* Kubernetes RBAC
+* NGINX Ingress
+* Docker
+* Docker Hub
+* Jenkins
+* Jenkins Pipeline
+* Maven
+* Nexus Repository
+* SonarQube
+* Trivy
+* GitHub
+* CI/CD automation
+* DevSecOps practices
+* Troubleshooting distributed infrastructure
+
+---
+
+# 49. Resume Project Description
+
+### CI/CD Pipeline for Containerized Java Application
+
+**Technologies:** AWS EC2, Jenkins, Kubernetes, Docker, Maven, Nexus, SonarQube, Trivy, GitHub, Calico, NGINX Ingress, RBAC
+
+* Built an automated CI/CD pipeline using Jenkins to compile, test, scan, package, containerize, and deploy a Java Spring Boot application.
+* Provisioned and configured a 3-node Kubernetes cluster on AWS EC2 using kubeadm, containerd, and Calico networking.
+* Integrated SonarQube quality gates and Trivy filesystem/container image scanning into the CI/CD workflow.
+* Published Maven artifacts to Nexus Repository and Docker images to Docker Hub.
+* Automated Kubernetes deployments using Jenkins and kubectl with namespace-level RBAC.
+* Configured NGINX Ingress for application traffic routing and implemented automated deployment verification.
+* Troubleshot Kubernetes control-plane, container runtime, Docker daemon permissions, Docker CLI compatibility, and Jenkins-to-Kubernetes network connectivity issues.
+* Implemented Jenkins email notifications with pipeline status and security scan reports.
+
+---
+
+# 50. Project Disclaimer
+
+The Board Game application used in this project is an existing application used as the deployment workload.
+
+The engineering focus of this repository is the:
+
+```text
+Infrastructure
++
+CI/CD
++
+Containerization
++
+Security Scanning
++
+Kubernetes Deployment
++
+Automation
+```
+
+rather than development of the application itself.
+
+---
+
+# 51. Future Improvements
+
+Potential improvements include:
+
+* Prometheus monitoring
+* Grafana dashboards
+* Kubernetes metrics server
+* Centralized logging
+* Helm-based deployments
+* Kubernetes Secrets management
+* TLS/HTTPS with cert-manager
+* Private Docker registry
+* Jenkins shared libraries
+* Automated infrastructure provisioning using Terraform
+* AWS EKS migration
+* Horizontal Pod Autoscaling
+* Blue/Green deployment
+* Canary deployment
+* Argo CD / GitOps
+
+---
+
+# 52. Conclusion
+
+This project demonstrates an end-to-end DevOps workflow where application source code is automatically transformed into a tested, security-scanned, containerized, and Kubernetes-deployed application.
+
+The final workflow is:
+
+```text
+GitHub
+   ↓
+Jenkins
+   ↓
+Maven
+   ↓
+JUnit
+   ↓
+Trivy
+   ↓
+SonarQube
+   ↓
+Quality Gate
+   ↓
+Nexus
+   ↓
+Docker
+   ↓
+Trivy
+   ↓
+Docker Hub
+   ↓
+Kubernetes
+   ↓
+NGINX Ingress
+   ↓
+Running Application
+```
+
+The goal of the project is to demonstrate practical DevOps automation rather than manual application deployment.
+
+````
+
+### One important change I recommend
+
+Don't put the RBAC YAML you showed me **inside the README**. Put it in the repository as an actual file:
+
+```text
+k8s/
+└── rbac.yaml
+````
+
+And similarly, I would make the repository eventually look like:
+
+```text
+CI-CD-Pipeline-Deployment/
+│
+├── src/
+├── Dockerfile
+├── Jenkinsfile
+├── pom.xml
+├── deployment-service.yaml
+├── README.md
+│
+├── k8s/
+│   ├── rbac.yaml
+│   └── ingress.yaml
+│
+├── scripts/
+│   ├── docker.sh
+│   ├── kubernetes.sh
+│   └── setup-k8s-nodes.sh
+│
+└── docs/
+    ├── kubernetes-setup.md
+    ├── jenkins-setup.md
+    └── troubleshooting.md
+
